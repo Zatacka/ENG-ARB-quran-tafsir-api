@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Virtual environments and secrets
+.venv/
+venv/
+env/
+.env
+
+# Extracted runtime data. The repository stores split compressed parts instead.
+data/
+
+# Temporary joined archives
+*.joined.zip
+*.tmp
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

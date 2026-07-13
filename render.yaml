@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: quran-tafsir-api
+    runtime: docker
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: CACHE_CONTROL
+        value: "public, max-age=300, stale-while-revalidate=86400"

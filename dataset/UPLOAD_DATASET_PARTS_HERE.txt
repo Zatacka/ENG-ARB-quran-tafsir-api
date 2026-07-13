@@ -1,0 +1,3 @@
+Download all 16 files named tafsir-data.zip.part000 through tafsir-data.zip.part015.
+Upload them into this dataset directory without renaming them.
+Keep tafsir-data.sha256 in this directory as well.

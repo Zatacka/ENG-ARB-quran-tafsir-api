@@ -1,0 +1,9 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      ALLOWED_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+      CACHE_CONTROL: "public, max-age=300, stale-while-revalidate=86400"
+    restart: unless-stopped
