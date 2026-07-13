@@ -13,6 +13,17 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Preserve full edition metadata
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('.github/scripts/build_wic_accurate_hadith_package.py')
+          content = path.read_text(encoding='utf-8')
+          content = content.replace(
+              'for filename in (f"{edition}.min.json", f"{edition}.json"):',
+              'for filename in (f"{edition}.json", f"{edition}.min.json"):',
+          )
+          path.write_text(content, encoding='utf-8')
       - name: Build accurate bilingual Hadith package
         run: python .github/scripts/build_wic_accurate_hadith_package.py
       - name: Upload package
