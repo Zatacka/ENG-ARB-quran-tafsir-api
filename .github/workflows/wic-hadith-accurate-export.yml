@@ -1,0 +1,25 @@
+name: WIC accurate Hadith package export
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build accurate bilingual Hadith package
+        run: python .github/scripts/build_wic_accurate_hadith_package.py
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: wic-accurate-hadith-package
+          path: out/wic-hadith-core.sqlite3
+          if-no-files-found: error
+          compression-level: 9
+          retention-days: 1
