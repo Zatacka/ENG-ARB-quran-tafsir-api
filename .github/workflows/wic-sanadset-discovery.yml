@@ -1,4 +1,4 @@
-name: WIC Sanadset discovery
+name: WIC authenticated Hadith expansion
 
 on:
   pull_request:
@@ -8,38 +8,170 @@ permissions:
   contents: read
 
 jobs:
-  discover:
+  package:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch Sanadset catalogue and samples
+      - name: Build source-governed Hadith packages
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p out
+          mkdir -p out/packages
           python - <<'PY'
-          import hashlib, json, urllib.request
-          files={
-              'books.csv':('https://data.mendeley.com/public-files/datasets/5xth87zwb5/files/a09faa74-5d63-4baf-82cf-6e139dcea579/file_downloaded','0e6d45ce409e8fb8d9a246f2ed3d773237a1acc779e9f55b0c026efe87757924'),
-              'hadith_samples.csv':('https://data.mendeley.com/public-files/datasets/5xth87zwb5/files/c3ca4e3f-d397-44e2-94d2-6d4459550fdd/file_downloaded','50873d1c987d4f977d3d1fe0643a98345323ce08d58a6b6c5715b039f02277a6'),
-              'translated_samples.csv':('https://data.mendeley.com/public-files/datasets/5xth87zwb5/files/cd8bab07-433c-46fd-af4e-7cac4d84d3ce/file_downloaded','e63b06970ce7c3fe5b580042c16be0c302a237c6876cb0f8df3923e139df9f34'),
+          from __future__ import annotations
+          import csv, hashlib, html, io, json, re, sqlite3, urllib.request
+          from pathlib import Path
+
+          DATASET_URL='https://data.mendeley.com/public-files/datasets/5xth87zwb5/files/fe0857fa-73af-4873-b652-60eb7347b811/file_downloaded'
+          DATASET_SHA256='bbe4fd3d9ef797a78c9ddfdc7d31a9d2185c2f7efa0ecee75c9fc46b6dcfb5b3'
+          PROVIDER='Sanadset 650K'
+          PROVIDER_URL='https://data.mendeley.com/datasets/5xth87zwb5/4'
+          DOI='10.17632/5xth87zwb5.4'
+          SENTINEL_SANAD='\ue000'
+          SENTINEL_MATN='\ue001'
+
+          DIRECT={
+            'الأدب المفرد للبخاري': dict(slug='al-adab-al-mufrad',name_en='Adab Al-Mufrad',name_ar='الأدب المفرد',compiler='Imam Muhammad al-Bukhari',classification='adab'),
+            'السنن الكبرى للبيهقي': dict(slug='as-sunan-al-kubra-li-al-bayhaqi',name_en='As-Sunan al-Kubra li al-Bayhaqi',name_ar='السنن الكبرى للبيهقي',compiler='Imam Ahmad al-Bayhaqi',classification='sunan'),
+            'الشمائل المحمدية للترمذي': dict(slug='ash-shama-il-al-muhammadiyah',name_en="Ash-Shama'il Al-Muhammadiyah",name_ar='الشمائل المحمدية',compiler='Imam Muhammad at-Tirmidhi',classification='shamail'),
+            'مصنف عبد الرزاق': dict(slug='musannaf-abd-ar-razzaq',name_en='Musannaf Abd ar-Razzaq',name_ar='مصنف عبد الرزاق',compiler='Imam Abd ar-Razzaq as-Sanani',classification='musannaf'),
+            'مصنف ابن أبي شيبة': dict(slug='musannaf-ibn-abi-shayba',name_en='Musannaf Ibn Abi Shayba',name_ar='مصنف ابن أبي شيبة',compiler='Imam Abu Bakr Ibn Abi Shayba',classification='musannaf'),
+            'مسند أحمد بن حنبل': dict(slug='musnad-ahmad',name_en='Musnad Ahmad',name_ar='مسند أحمد بن حنبل',compiler='Imam Ahmad ibn Hanbal',classification='musnad'),
+            'المستدرك على الصحيحين': dict(slug='mustadrak-al-hakim',name_en='Mustadrak al-Hakim',name_ar='المستدرك على الصحيحين',compiler='Imam al-Hakim an-Naysaburi',classification='mustadrak'),
+            'صحيح ابن حبان': dict(slug='sahih-ibn-hibban',name_en='Sahih Ibn Hibban',name_ar='صحيح ابن حبان',compiler='Imam Ibn Hibban al-Busti',classification='hadith'),
+            'صحيح ابن خزيمة': dict(slug='sahih-ibn-khuzayma',name_en='Sahih Ibn Khuzayma',name_ar='صحيح ابن خزيمة',compiler='Imam Ibn Khuzayma',classification='hadith'),
+            'سنن الدارقطني': dict(slug='sunan-ad-daraqutni',name_en='Sunan ad-Daraqutni',name_ar='سنن الدارقطني',compiler='Imam ad-Daraqutni',classification='sunan'),
+            'سنن الدارمي': dict(slug='sunan-ad-darimi',name_en='Sunan ad-Darimi',name_ar='سنن الدارمي',compiler='Imam ad-Darimi',classification='sunan'),
+            'السنن الكبرى للنسائي': dict(slug='sunan-an-nasa-i-al-kubra',name_en="Sunan an-Nasa'i al-Kubra",name_ar='السنن الكبرى للنسائي',compiler="Imam Ahmad an-Nasa'i",classification='sunan'),
           }
-          report=[]
-          for filename,(url,expected) in files.items():
-              request=urllib.request.Request(url,headers={'User-Agent':'World-Islamic-Center/1.0'})
-              with urllib.request.urlopen(request,timeout=180) as response:
-                  data=response.read()
-              digest=hashlib.sha256(data).hexdigest()
-              if digest!=expected: raise RuntimeError(f'{filename} checksum mismatch')
-              open('out/'+filename,'wb').write(data)
-              report.append({'filename':filename,'bytes':len(data),'sha256':digest})
-          open('out/report.json','w',encoding='utf-8').write(json.dumps(report,ensure_ascii=False,indent=2))
+          GROUPS={
+            'collections-of-forty': dict(name_en='Collections of Forty',name_ar='الأربعينات',compiler='Multiple classical compilers',classification='curated-source-group'),
+            'special-virtues-of-the-qur-an-s-chapters-and-verses': dict(name_en="Special Virtues of the Qur'an's Chapters and Verses",name_ar='فضائل سور القرآن وآياته',compiler='Multiple classical compilers',classification='thematic-source-group'),
+          }
+          forty_re=re.compile(r'(?:الأربعون|الأربعين|أربعون حديث)')
+          virtue_books={
+            'فضائل القرآن للقاسم بن سلام','فضائل القرآن وتلاوته للرازي','فضائل القرآن لابن الضريس','فضائل القرآن للفريابي'
+          }
+
+          def clean(value: object) -> str:
+            text=html.unescape(str(value or ''))
+            text=re.sub(r'</?(?:SANAD|MATN|NAR)>','',text,flags=re.I)
+            return re.sub(r'\s+',' ',text).strip()
+
+          def split_text(raw: str, fallback_matn: str) -> tuple[str,str]:
+            raw=html.unescape(raw or '')
+            sanad_match=re.search(r'<SANAD>(.*?)</SANAD>',raw,flags=re.I|re.S)
+            matn_match=re.search(r'<MATN>(.*?)</MATN>',raw,flags=re.I|re.S)
+            if sanad_match:
+              prefix=raw[:sanad_match.start()]
+              sanad=clean(prefix+' '+sanad_match.group(1))
+            else:
+              sanad=''
+            matn=clean(matn_match.group(1)) if matn_match else clean(fallback_matn)
+            if not matn:
+              matn=clean(raw)
+            return sanad,matn
+
+          def create_package(meta: dict) -> sqlite3.Connection:
+            path=Path('out/packages')/f"{meta['slug']}.sqlite3"
+            con=sqlite3.connect(path)
+            con.execute('pragma journal_mode=off'); con.execute('pragma synchronous=off'); con.execute('pragma temp_store=memory')
+            con.executescript('''
+              create table collections(slug text primary key,name_en text not null,name_ar text not null default '',compiler_en text not null default '',classification text not null default '',authenticity_en text not null default '',cover_path text not null default '');
+              create table hadiths(id integer primary key,collection_slug text not null,hadith_number text not null,section_en text not null default '',arabic_text text not null default '',translation_en text not null default '',grades_json text not null default '[]',source_url text not null default '',unique(collection_slug,hadith_number));
+              create table hadith_references(id integer primary key,collection_slug text not null,hadith_number text not null,arabic_number text not null default '',section_number text not null default '',section_en text not null default '',section_ar text not null default '',book_number text not null default '',in_book_hadith text not null default '',source_edition_en text not null default '',source_edition_ar text not null default '',provider_name text not null default '',provider_url text not null default '',unique(collection_slug,hadith_number));
+              create table package_metadata(key text primary key,value text not null);
+              create index ix_hadith_collection on hadiths(collection_slug);
+              create index ix_hadith_reference_collection on hadith_references(collection_slug);
+            ''')
+            authenticity=(
+              'Arabic source text and explicit sanad/matn markup are reproduced from Sanadset 650K. '
+              'The dataset does not supply per-report authenticity grades, so this platform does not infer or assign one. '
+              'Consult qualified hadith scholarship and critical editions for grading.'
+            )
+            con.execute('insert into collections(slug,name_en,name_ar,compiler_en,classification,authenticity_en) values(?,?,?,?,?,?)',(
+              meta['slug'],meta['name_en'],meta['name_ar'],meta['compiler'],meta['classification'],authenticity
+            ))
+            for key,value in {
+              'provider':PROVIDER,'provider_url':PROVIDER_URL,'doi':DOI,'license':'CC BY 4.0',
+              'transformations':'Requested-book extraction; whitespace normalization; explicit sanad/matn boundary preservation; SQLite indexing.',
+              'grading_policy':'No per-report grade is inferred because Sanadset supplies none.',
+            }.items(): con.execute('insert into package_metadata(key,value) values(?,?)',(key,value))
+            return con
+
+          metas={m['slug']:{**m,'slug':m['slug']} for m in DIRECT.values()}
+          metas.update({slug:{**meta,'slug':slug} for slug,meta in GROUPS.items()})
+          connections={slug:create_package(meta) for slug,meta in metas.items()}
+          counts={slug:0 for slug in metas}; seen={slug:set() for slug in metas}; group_book_index={slug:{} for slug in GROUPS}
+          batches={slug:[] for slug in metas}; refs={slug:[] for slug in metas}
+
+          def flush(slug: str) -> None:
+            if batches[slug]:
+              connections[slug].executemany('insert into hadiths(collection_slug,hadith_number,section_en,arabic_text,translation_en,grades_json,source_url) values(?,?,?,?,?,?,?)',batches[slug]); batches[slug].clear()
+            if refs[slug]:
+              connections[slug].executemany('insert into hadith_references(collection_slug,hadith_number,arabic_number,section_number,section_en,section_ar,book_number,in_book_hadith,source_edition_en,source_edition_ar,provider_name,provider_url) values(?,?,?,?,?,?,?,?,?,?,?,?)',refs[slug]); refs[slug].clear()
+
+          request=urllib.request.Request(DATASET_URL,headers={'User-Agent':'World-Islamic-Center/1.0 (+CC-BY attributed extraction)'})
+          digest=hashlib.sha256()
+          with urllib.request.urlopen(request,timeout=600) as response:
+            class HashingReader(io.RawIOBase):
+              def readable(self): return True
+              def readinto(self,b):
+                chunk=response.read(len(b))
+                if not chunk: return 0
+                digest.update(chunk); b[:len(chunk)]=chunk; return len(chunk)
+            stream=io.TextIOWrapper(io.BufferedReader(HashingReader(),buffer_size=1024*1024),encoding='utf-8-sig',errors='strict',newline='')
+            csv.field_size_limit(256*1024*1024)
+            reader=csv.DictReader(stream)
+            required={'Hadith','Book','Num_hadith','Matn'}
+            if not required.issubset(set(reader.fieldnames or [])): raise RuntimeError(f'Unexpected Sanadset columns: {reader.fieldnames}')
+            for row in reader:
+              book=str(row.get('Book') or '').strip(); original_num=str(row.get('Num_hadith') or '').strip()
+              if not book or not original_num: continue
+              meta=DIRECT.get(book); source_group=''
+              if meta:
+                slug=meta['slug']; number=original_num; chapter=''
+              elif forty_re.search(book):
+                slug='collections-of-forty'; source_group=book
+                index=group_book_index[slug].setdefault(book,len(group_book_index[slug])+1)
+                number=f'{index:02d}-{original_num}'; chapter=book
+              elif book in virtue_books:
+                slug='special-virtues-of-the-qur-an-s-chapters-and-verses'; source_group=book
+                index=group_book_index[slug].setdefault(book,len(group_book_index[slug])+1)
+                number=f'{index:02d}-{original_num}'; chapter=book
+              else:
+                continue
+              if number in seen[slug]: continue
+              seen[slug].add(number)
+              sanad,matn=split_text(str(row.get('Hadith') or ''),str(row.get('Matn') or ''))
+              if not sanad and not matn: continue
+              arabic=(SENTINEL_SANAD+sanad+SENTINEL_MATN+matn) if sanad else (SENTINEL_MATN+matn)
+              source_book=source_group or book
+              batches[slug].append((slug,number,chapter,arabic,'','[]',PROVIDER_URL))
+              refs[slug].append((slug,number,original_num,'',source_book,source_book,'',original_num,'',f'Sanadset 650K · {source_book}'[:100],PROVIDER,PROVIDER_URL))
+              counts[slug]+=1
+              if len(batches[slug])>=1000: flush(slug)
+          if digest.hexdigest()!=DATASET_SHA256: raise RuntimeError(f'Sanadset checksum mismatch: {digest.hexdigest()}')
+          for slug,con in connections.items():
+            flush(slug)
+            con.execute('insert into package_metadata(key,value) values(?,?)',('record_count',str(counts[slug])))
+            con.commit(); con.execute('vacuum'); con.close()
+            if counts[slug]<=0: raise RuntimeError(f'No records extracted for {slug}')
+
+          manifest={'dataset':{'name':PROVIDER,'doi':DOI,'url':PROVIDER_URL,'license':'CC BY 4.0','sha256':DATASET_SHA256},'collections':[]}
+          for slug in sorted(metas):
+            path=Path('out/packages')/f'{slug}.sqlite3'
+            manifest['collections'].append({'slug':slug,'name_en':metas[slug]['name_en'],'records':counts[slug],'bytes':path.stat().st_size,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
+          Path('out/manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
+          Path('out/SOURCE-NOTICE.md').write_text('''# Sanadset 650K source notice\n\nThese local Hadith packages contain selected Arabic records extracted from **Sanadset 650K: Data on Hadith Narrators**, version 4, by Mohammed Mghari, Omar Bouras, and Abdelaaziz El Hibaoui.\n\n- DOI: 10.17632/5xth87zwb5.4\n- Dataset page: https://data.mendeley.com/datasets/5xth87zwb5/4\n- License: Creative Commons Attribution 4.0 International (CC BY 4.0)\n- Changes made by World Islamic Center: selected-book extraction, whitespace normalization, preservation of supplied sanad/matn boundaries, stable local identifiers for grouped collections, and SQLite indexing.\n\nSanadset does not provide per-report authenticity grades. World Islamic Center therefore does not infer or assign a grade to these records.\n''',encoding='utf-8')
+          print(json.dumps({k:v for k,v in counts.items()},ensure_ascii=False,indent=2))
           PY
-      - name: Upload catalogue
+      - name: Upload expansion packages
         uses: actions/upload-artifact@v4
         with:
-          name: wic-sanadset-discovery
+          name: wic-authenticated-hadith-expansion
           path: out/
           if-no-files-found: error
+          compression-level: 9
           retention-days: 1
