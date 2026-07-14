@@ -1,0 +1,31 @@
+name: WIC supplemental Hadith export
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export supplementary structured Hadith source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://github.com/CheeseWithSauce/HadithsJSONFormat.git source
+          rm -rf source/.git
+          find source -maxdepth 3 -type f | sort > source-file-list.txt
+      - name: Upload source export
+        uses: actions/upload-artifact@v4
+        with:
+          name: wic-hadith-json-source
+          path: |
+            source/
+            source-file-list.txt
+          if-no-files-found: error
+          retention-days: 1
