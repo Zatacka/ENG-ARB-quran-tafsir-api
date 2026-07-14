@@ -13,44 +13,56 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Discover Mendeley file endpoint
+      - name: Resolve Mendeley file endpoint
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p out
           python - <<'PY'
-          import json, re, urllib.error, urllib.request
-          urls = {
-              'bundle.js': 'https://static.data.mendeley.com/datasets/bundle.js?8fdc8cd3ae505244c753',
-              'candidate-1.json': 'https://data.mendeley.com/api/datasets-v2/5xth87zwb5/versions/4/files',
-              'candidate-2.json': 'https://data.mendeley.com/api/datasets-v2/datasets/5xth87zwb5/versions/4/files',
-              'candidate-3.json': 'https://data.mendeley.com/api/datasets-v2/5xth87zwb5/4/files',
-              'candidate-4.json': 'https://data.mendeley.com/api/datasets-v2/datasets/5xth87zwb5/4/files',
-              'candidate-5.json': 'https://data.mendeley.com/api/datasets-v2/5xth87zwb5/files?version=4',
-              'candidate-6.json': 'https://data.mendeley.com/api/datasets-v2/files?dataset_id=5xth87zwb5&version=4',
-              'candidate-7.json': 'https://data.mendeley.com/api/datasets-v2/files?datasetId=5xth87zwb5&version=4',
-          }
-          report=[]
-          for filename,url in urls.items():
-              req=urllib.request.Request(url,headers={'User-Agent':'WIC-Dataset-Discovery/1.0','Accept':'application/json,text/javascript,*/*'})
-              try:
-                  with urllib.request.urlopen(req,timeout=120) as response:
-                      data=response.read(); status=response.status; final=response.geturl(); ctype=response.headers.get('content-type')
-              except urllib.error.HTTPError as exc:
-                  data=exc.read(); status=exc.code; final=exc.geturl(); ctype=exc.headers.get('content-type')
-              open('out/'+filename,'wb').write(data)
-              report.append({'filename':filename,'url':url,'final_url':final,'status':status,'content_type':ctype,'bytes':len(data)})
-          script=open('out/bundle.js','rb').read().decode('utf-8','replace')
-          matches=[]
-          for pattern in ['files','datasets-v2','download-all','archive','folders']:
+          import json, re, urllib.error, urllib.parse, urllib.request
+          base='https://data.mendeley.com'
+          bundle_url=base+'/datasets/bundle.js?8fdc8cd3ae505244c753'
+          req=urllib.request.Request(bundle_url,headers={'User-Agent':'WIC-Dataset-Discovery/1.0'})
+          with urllib.request.urlopen(req,timeout=180) as response:
+              bundle=response.read()
+          open('out/bundle.js','wb').write(bundle)
+          script=bundle.decode('utf-8','replace')
+          print('bundle bytes',len(bundle))
+          snippets=[]
+          for pattern in ['/files','files?','folders','archive','download-all','apiBaseUrl','datasets-v2']:
               start=0
+              count=0
               while True:
                   idx=script.find(pattern,start)
                   if idx<0: break
-                  matches.append(script[max(0,idx-220):idx+420])
+                  snippets.append(f'PATTERN {pattern}\n'+script[max(0,idx-500):idx+900])
                   start=idx+len(pattern)
-                  if len(matches)>500: break
-          open('out/bundle-snippets.txt','w',encoding='utf-8').write('\n\n---\n\n'.join(matches))
+                  count+=1
+                  if count>=100: break
+          open('out/bundle-snippets.txt','w',encoding='utf-8').write('\n\n==========\n\n'.join(snippets))
+          paths=sorted(set(re.findall(r'["\'](/api/datasets-v2[^"\']+)["\']',script)))
+          open('out/api-paths.json','w',encoding='utf-8').write(json.dumps(paths,ensure_ascii=False,indent=2))
+          # Probe likely endpoints assembled from strings found in the bundle.
+          candidates=[
+              '/api/datasets-v2/datasets/5xth87zwb5/versions/4/files',
+              '/api/datasets-v2/datasets/5xth87zwb5/versions/4/folders',
+              '/api/datasets-v2/datasets/5xth87zwb5/versions/4/archive',
+              '/api/datasets-v2/datasets/5xth87zwb5/versions/4/download',
+              '/api/datasets-v2/datasets/5xth87zwb5/4/files',
+              '/api/datasets-v2/datasets/5xth87zwb5/files?version=4',
+          ]
+          report=[]
+          for path in candidates:
+              url=base+path
+              request=urllib.request.Request(url,headers={'User-Agent':'WIC-Dataset-Discovery/1.0','Accept':'application/json,*/*'})
+              try:
+                  with urllib.request.urlopen(request,timeout=120) as response:
+                      data=response.read(); status=response.status; final=response.geturl(); ctype=response.headers.get('content-type')
+              except urllib.error.HTTPError as exc:
+                  data=exc.read(); status=exc.code; final=exc.geturl(); ctype=exc.headers.get('content-type')
+              filename='probe-'+str(len(report))+'.bin'
+              open('out/'+filename,'wb').write(data)
+              report.append({'path':path,'status':status,'final_url':final,'content_type':ctype,'bytes':len(data),'filename':filename})
           open('out/report.json','w',encoding='utf-8').write(json.dumps(report,ensure_ascii=False,indent=2))
           PY
       - name: Upload discovery
