@@ -10,39 +10,40 @@ permissions:
 jobs:
   discover:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Discover Mendeley public endpoints
+      - name: Discover Mendeley file endpoints
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p out
           python - <<'PY'
-          import json, urllib.error, urllib.request
+          import json, re, urllib.error, urllib.request
           urls = {
-              'dataset-version.json': 'https://data.mendeley.com/public-api/datasets/5xth87zwb5/versions/4',
-              'dataset-files.json': 'https://data.mendeley.com/public-api/datasets/5xth87zwb5/versions/4/files',
-              'dataset-short.json': 'https://data.mendeley.com/public-api/datasets/5xth87zwb5/4',
-              'datacite.json': 'https://api.datacite.org/dois/10.17632/5xth87zwb5.4',
-              'oai.xml': 'https://data.mendeley.com/oai?verb=GetRecord&metadataPrefix=oai_dc&identifier=10.17632/5xth87zwb5.4',
+              'page.html': 'https://data.mendeley.com/datasets/5xth87zwb5/4',
+              'api-1.json': 'https://data.mendeley.com/api/datasets/5xth87zwb5/versions/4',
+              'api-2.json': 'https://api.mendeley.com/datasets/5xth87zwb5/versions/4',
+              'api-3.json': 'https://data.mendeley.com/api/datasets/5xth87zwb5/4',
+              'api-4.json': 'https://data.mendeley.com/api/datasets/5xth87zwb5',
+              'api-5.json': 'https://api.mendeley.com/datasets/5xth87zwb5',
+              'api-6.json': 'https://data.mendeley.com/datasets/5xth87zwb5/4/files',
+              'api-7.json': 'https://data.mendeley.com/api/datasets/5xth87zwb5/versions/4/files',
+              'api-8.json': 'https://api.mendeley.com/datasets/5xth87zwb5/versions/4/files',
           }
           report = []
           for filename, url in urls.items():
-              req = urllib.request.Request(url, headers={'User-Agent':'WIC-Dataset-Discovery/1.0','Accept':'application/json,text/xml,text/html,*/*'})
+              req = urllib.request.Request(url, headers={'User-Agent':'WIC-Dataset-Discovery/1.0','Accept':'application/json,text/html,*/*'})
               try:
                   with urllib.request.urlopen(req, timeout=90) as response:
-                      data = response.read()
-                      status = response.status
-                      final = response.geturl()
-                      ctype = response.headers.get('content-type')
+                      data = response.read(); status=response.status; final=response.geturl(); ctype=response.headers.get('content-type')
               except urllib.error.HTTPError as exc:
-                  data = exc.read()
-                  status = exc.code
-                  final = exc.geturl()
-                  ctype = exc.headers.get('content-type')
-              open('out/'+filename, 'wb').write(data)
+                  data=exc.read(); status=exc.code; final=exc.geturl(); ctype=exc.headers.get('content-type')
+              open('out/'+filename,'wb').write(data)
               report.append({'filename':filename,'url':url,'final_url':final,'status':status,'content_type':ctype,'bytes':len(data)})
+          page = open('out/page.html','rb').read().decode('utf-8','replace')
+          patterns = sorted(set(re.findall(r'https?://[^"<>\\s]+', page)))
+          open('out/page-urls.txt','w',encoding='utf-8').write('\n'.join(patterns))
           open('out/report.json','w',encoding='utf-8').write(json.dumps(report,ensure_ascii=False,indent=2))
           PY
       - name: Upload discovery
