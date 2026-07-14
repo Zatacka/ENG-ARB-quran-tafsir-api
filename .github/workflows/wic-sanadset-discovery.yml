@@ -13,35 +13,30 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch Sanadset file manifest
+      - name: Fetch Sanadset catalogue and samples
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p out
           python - <<'PY'
-          import json, urllib.error, urllib.request
-          headers={
-              'User-Agent':'World-Islamic-Center/1.0 (+local dataset integration)',
-              'Accept':'application/vnd.mendeley-public-dataset.1+json',
-          }
-          urls={
-              'files-root.json':'https://data.mendeley.com/public-api/datasets/5xth87zwb5/files?folder_id=root&version=4',
-              'files-no-folder.json':'https://data.mendeley.com/public-api/datasets/5xth87zwb5/files?version=4',
-              'folders.json':'https://data.mendeley.com/public-api/datasets/5xth87zwb5/folders?version=4',
+          import hashlib, json, urllib.request
+          files={
+              'books.csv':('https://data.mendeley.com/public-files/datasets/5xth87zwb5/files/a09faa74-5d63-4baf-82cf-6e139dcea579/file_downloaded','0e6d45ce409e8fb8d9a246f2ed3d773237a1acc779e9f55b0c026efe87757924'),
+              'hadith_samples.csv':('https://data.mendeley.com/public-files/datasets/5xth87zwb5/files/c3ca4e3f-d397-44e2-94d2-6d4459550fdd/file_downloaded','50873d1c987d4f977d3d1fe0643a98345323ce08d58a6b6c5715b039f02277a6'),
+              'translated_samples.csv':('https://data.mendeley.com/public-files/datasets/5xth87zwb5/files/cd8bab07-433c-46fd-af4e-7cac4d84d3ce/file_downloaded','e63b06970ce7c3fe5b580042c16be0c302a237c6876cb0f8df3923e139df9f34'),
           }
           report=[]
-          for filename,url in urls.items():
-              req=urllib.request.Request(url,headers=headers)
-              try:
-                  with urllib.request.urlopen(req,timeout=180) as response:
-                      data=response.read(); status=response.status; final=response.geturl(); ctype=response.headers.get('content-type')
-              except urllib.error.HTTPError as exc:
-                  data=exc.read(); status=exc.code; final=exc.geturl(); ctype=exc.headers.get('content-type')
+          for filename,(url,expected) in files.items():
+              request=urllib.request.Request(url,headers={'User-Agent':'World-Islamic-Center/1.0'})
+              with urllib.request.urlopen(request,timeout=180) as response:
+                  data=response.read()
+              digest=hashlib.sha256(data).hexdigest()
+              if digest!=expected: raise RuntimeError(f'{filename} checksum mismatch')
               open('out/'+filename,'wb').write(data)
-              report.append({'filename':filename,'status':status,'final_url':final,'content_type':ctype,'bytes':len(data),'preview':data[:500].decode('utf-8','replace')})
+              report.append({'filename':filename,'bytes':len(data),'sha256':digest})
           open('out/report.json','w',encoding='utf-8').write(json.dumps(report,ensure_ascii=False,indent=2))
           PY
-      - name: Upload manifest
+      - name: Upload catalogue
         uses: actions/upload-artifact@v4
         with:
           name: wic-sanadset-discovery
