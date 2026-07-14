@@ -1,0 +1,41 @@
+name: WIC Sanadset discovery
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Discover DOI and dataset endpoints
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import json, urllib.request
+          urls = {
+              'crossref.json': 'https://api.crossref.org/works/10.1016/j.dib.2022.108540',
+              'doi.html': 'https://doi.org/10.1016/j.dib.2022.108540',
+          }
+          for filename, url in urls.items():
+              req = urllib.request.Request(url, headers={'User-Agent':'WIC-Dataset-Discovery/1.0'})
+              with urllib.request.urlopen(req, timeout=60) as response:
+                  data = response.read()
+                  print(filename, response.geturl(), response.status, response.headers.get('content-type'), len(data))
+              open('out/'+filename, 'wb').write(data)
+          PY
+          grep -RoiE 'https?://[^"< ]+' out | head -200 > out/urls.txt || true
+      - name: Upload discovery
+        uses: actions/upload-artifact@v4
+        with:
+          name: wic-sanadset-discovery
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
