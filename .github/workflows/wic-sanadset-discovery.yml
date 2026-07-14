@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Discover Mendeley file endpoints
+      - name: Discover Mendeley file endpoint
         shell: bash
         run: |
           set -euxo pipefail
@@ -21,29 +21,36 @@ jobs:
           python - <<'PY'
           import json, re, urllib.error, urllib.request
           urls = {
-              'page.html': 'https://data.mendeley.com/datasets/5xth87zwb5/4',
-              'api-1.json': 'https://data.mendeley.com/api/datasets/5xth87zwb5/versions/4',
-              'api-2.json': 'https://api.mendeley.com/datasets/5xth87zwb5/versions/4',
-              'api-3.json': 'https://data.mendeley.com/api/datasets/5xth87zwb5/4',
-              'api-4.json': 'https://data.mendeley.com/api/datasets/5xth87zwb5',
-              'api-5.json': 'https://api.mendeley.com/datasets/5xth87zwb5',
-              'api-6.json': 'https://data.mendeley.com/datasets/5xth87zwb5/4/files',
-              'api-7.json': 'https://data.mendeley.com/api/datasets/5xth87zwb5/versions/4/files',
-              'api-8.json': 'https://api.mendeley.com/datasets/5xth87zwb5/versions/4/files',
+              'bundle.js': 'https://static.data.mendeley.com/datasets/bundle.js?8fdc8cd3ae505244c753',
+              'candidate-1.json': 'https://data.mendeley.com/api/datasets-v2/5xth87zwb5/versions/4/files',
+              'candidate-2.json': 'https://data.mendeley.com/api/datasets-v2/datasets/5xth87zwb5/versions/4/files',
+              'candidate-3.json': 'https://data.mendeley.com/api/datasets-v2/5xth87zwb5/4/files',
+              'candidate-4.json': 'https://data.mendeley.com/api/datasets-v2/datasets/5xth87zwb5/4/files',
+              'candidate-5.json': 'https://data.mendeley.com/api/datasets-v2/5xth87zwb5/files?version=4',
+              'candidate-6.json': 'https://data.mendeley.com/api/datasets-v2/files?dataset_id=5xth87zwb5&version=4',
+              'candidate-7.json': 'https://data.mendeley.com/api/datasets-v2/files?datasetId=5xth87zwb5&version=4',
           }
-          report = []
-          for filename, url in urls.items():
-              req = urllib.request.Request(url, headers={'User-Agent':'WIC-Dataset-Discovery/1.0','Accept':'application/json,text/html,*/*'})
+          report=[]
+          for filename,url in urls.items():
+              req=urllib.request.Request(url,headers={'User-Agent':'WIC-Dataset-Discovery/1.0','Accept':'application/json,text/javascript,*/*'})
               try:
-                  with urllib.request.urlopen(req, timeout=90) as response:
-                      data = response.read(); status=response.status; final=response.geturl(); ctype=response.headers.get('content-type')
+                  with urllib.request.urlopen(req,timeout=120) as response:
+                      data=response.read(); status=response.status; final=response.geturl(); ctype=response.headers.get('content-type')
               except urllib.error.HTTPError as exc:
                   data=exc.read(); status=exc.code; final=exc.geturl(); ctype=exc.headers.get('content-type')
               open('out/'+filename,'wb').write(data)
               report.append({'filename':filename,'url':url,'final_url':final,'status':status,'content_type':ctype,'bytes':len(data)})
-          page = open('out/page.html','rb').read().decode('utf-8','replace')
-          patterns = sorted(set(re.findall(r'https?://[^"<>\\s]+', page)))
-          open('out/page-urls.txt','w',encoding='utf-8').write('\n'.join(patterns))
+          script=open('out/bundle.js','rb').read().decode('utf-8','replace')
+          matches=[]
+          for pattern in ['files','datasets-v2','download-all','archive','folders']:
+              start=0
+              while True:
+                  idx=script.find(pattern,start)
+                  if idx<0: break
+                  matches.append(script[max(0,idx-220):idx+420])
+                  start=idx+len(pattern)
+                  if len(matches)>500: break
+          open('out/bundle-snippets.txt','w',encoding='utf-8').write('\n\n---\n\n'.join(matches))
           open('out/report.json','w',encoding='utf-8').write(json.dumps(report,ensure_ascii=False,indent=2))
           PY
       - name: Upload discovery
