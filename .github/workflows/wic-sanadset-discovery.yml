@@ -13,25 +13,38 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Discover DOI and dataset endpoints
+      - name: Discover Mendeley public endpoints
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p out
           python - <<'PY'
-          import json, urllib.request
+          import json, urllib.error, urllib.request
           urls = {
-              'crossref.json': 'https://api.crossref.org/works/10.1016/j.dib.2022.108540',
-              'doi.html': 'https://doi.org/10.1016/j.dib.2022.108540',
+              'dataset-version.json': 'https://data.mendeley.com/public-api/datasets/5xth87zwb5/versions/4',
+              'dataset-files.json': 'https://data.mendeley.com/public-api/datasets/5xth87zwb5/versions/4/files',
+              'dataset-short.json': 'https://data.mendeley.com/public-api/datasets/5xth87zwb5/4',
+              'datacite.json': 'https://api.datacite.org/dois/10.17632/5xth87zwb5.4',
+              'oai.xml': 'https://data.mendeley.com/oai?verb=GetRecord&metadataPrefix=oai_dc&identifier=10.17632/5xth87zwb5.4',
           }
+          report = []
           for filename, url in urls.items():
-              req = urllib.request.Request(url, headers={'User-Agent':'WIC-Dataset-Discovery/1.0'})
-              with urllib.request.urlopen(req, timeout=60) as response:
-                  data = response.read()
-                  print(filename, response.geturl(), response.status, response.headers.get('content-type'), len(data))
+              req = urllib.request.Request(url, headers={'User-Agent':'WIC-Dataset-Discovery/1.0','Accept':'application/json,text/xml,text/html,*/*'})
+              try:
+                  with urllib.request.urlopen(req, timeout=90) as response:
+                      data = response.read()
+                      status = response.status
+                      final = response.geturl()
+                      ctype = response.headers.get('content-type')
+              except urllib.error.HTTPError as exc:
+                  data = exc.read()
+                  status = exc.code
+                  final = exc.geturl()
+                  ctype = exc.headers.get('content-type')
               open('out/'+filename, 'wb').write(data)
+              report.append({'filename':filename,'url':url,'final_url':final,'status':status,'content_type':ctype,'bytes':len(data)})
+          open('out/report.json','w',encoding='utf-8').write(json.dumps(report,ensure_ascii=False,indent=2))
           PY
-          grep -RoiE 'https?://[^"< ]+' out | head -200 > out/urls.txt || true
       - name: Upload discovery
         uses: actions/upload-artifact@v4
         with:
